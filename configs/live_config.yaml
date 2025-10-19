@@ -1,0 +1,20 @@
+ig:
+  account_type: "${IG_ACCOUNT_TYPE}"   # fallback to .env
+  epic: "IX.D.SPTRD.DAILY.IP"           # set the EPIC you trade
+  size: 1.0
+  guaranteed_stop: false
+
+strategy:
+  mode: "fixed"         # "fixed" | "gapN" (both supported)
+  rr: 1.5               # <-- EXACT R:R 1:1.5
+  rsi_period: 2
+  rsi_cross_up_level: 10
+  timeframe_sec: 300    # 5m (change to 60m -> 3600, etc.)
+
+risk:
+  max_daily_loss_pts: 500
+  slippage_pts: 0.0
+
+ops:
+  dry_run: true
+  log_level: "INFO"
