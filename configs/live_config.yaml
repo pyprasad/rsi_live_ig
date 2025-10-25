@@ -1,3 +1,4 @@
+# configs/live_config.yaml
 ig:
   account_type: "${IG_ACCOUNT_TYPE}"   # fallback to .env
   epic: "IX.D.SPTRD.DAILY.IP"           # set the EPIC you trade
@@ -11,10 +12,9 @@ strategy:
   rsi_cross_up_level: 10
   timeframe_sec: 300    # 5m (change to 60m -> 3600, etc.)
 
-risk:
   max_daily_loss_pts: 500
   slippage_pts: 0.0
 
 ops:
-  dry_run: true
+  dry_run: false
   log_level: "INFO"

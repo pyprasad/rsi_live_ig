@@ -5,3 +5,4 @@ PyYAML==6.0.2
 python-dotenv==1.0.1
 pytz==2024.1
 lightstreamer-client-lib==1.0.3
+pymongo==4.6.1

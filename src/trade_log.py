@@ -1,4 +1,3 @@
-# src/trade_log.py
 from pathlib import Path
 import csv
 from datetime import datetime, timezone

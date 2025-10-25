@@ -1,4 +1,3 @@
-# src/position_gate.py
 import time
 
 class PositionGate:
@@ -15,17 +14,12 @@ class PositionGate:
                 pos = self.broker.open_positions()
                 self._has_open = len(pos) > 0
             except Exception:
-                # On error, be conservative: assume has open
-                self._has_open = True
+                self._has_open = True  # be conservative
             self._next_refresh = now + self.refresh_sec
 
     def has_open(self):
         self.refresh_if_due()
         return self._has_open
 
-    def mark_open(self):
-        self._has_open = True
-        # next refresh will confirm
-
-    def mark_closed(self):
-        self._has_open = False
+    def mark_open(self): self._has_open = True
+    def mark_closed(self): self._has_open = False

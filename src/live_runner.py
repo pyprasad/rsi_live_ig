@@ -1,10 +1,17 @@
-# src/live_runner.py
 import os, time, yaml, pandas as pd, threading
 from queue import Queue, Empty
 from dotenv import load_dotenv
-from src.strategy_core import rsi_cross_up, compute_sl_tp_fixed_rr, compute_tp_gapN
-from src.ig_adapter import IGBroker, IGAuth
-from data.collector import start_streaming, stop_streaming
+
+from .strategy_core import rsi_cross_up, compute_sl_tp_fixed_rr, compute_tp_gapN, rsi
+from .ig_adapter import IGBroker, IGAuth
+from .data.collector import start_streaming, stop_streaming
+from .logging_setup import setup_logging
+from .preflight import preflight_can_trade
+from .position_gate import PositionGate
+from .trade_log import log_trade_csv
+from .mongo_logger import MongoLogger
+
+logging = setup_logging()
 
 def price_to_dist(entry, sl, tp):
     return max(entry - sl, 0.1), max(tp - entry, 0.1)
@@ -15,11 +22,13 @@ def authenticate_for_stream(auth: IGAuth):
     h = {"X-IG-API-KEY": auth.api_key, "Content-Type":"application/json", "Accept":"application/json"}
     r = requests.post(f"{base}/session", json={"identifier": auth.username, "password": auth.password}, headers=h); r.raise_for_status()
     CST, XST = r.headers.get("CST"), r.headers.get("X-SECURITY-TOKEN")
+    s = requests.get(f"{base}/session?fetchSessionTokens=true", headers={**h, "CST": CST, "X-SECURITY-TOKEN": XST}); s.raise_for_status()
+    data = s.json()
+    ls_endpoint = data.get("lightstreamerEndpoint") or ("https://demo-apd.marketdatasystems.com" if auth.account_type.upper()=="DEMO" else "https://apd.marketdatasystems.com")
+    # account id (preferred)
     a = requests.get(f"{base}/accounts", headers={**h, "CST": CST, "X-SECURITY-TOKEN": XST}); a.raise_for_status()
     accounts = a.json().get("accounts", [])
     account_id = next((x["accountId"] for x in accounts if x.get("preferred")), (accounts[0]["accountId"] if accounts else None))
-    s = requests.get(f"{base}/session?fetchSessionTokens=true", headers={**h, "CST": CST, "X-SECURITY-TOKEN": XST}); s.raise_for_status()
-    ls_endpoint = s.json().get("lightstreamerEndpoint") or ("https://demo-apd.marketdatasystems.com" if auth.account_type.upper()=="DEMO" else "https://apd.marketdatasystems.com")
     return CST, XST, ls_endpoint, account_id
 
 def main(cfg_path="configs/live_config.yaml"):
@@ -42,7 +51,7 @@ def main(cfg_path="configs/live_config.yaml"):
     dry  = bool(cfg["ops"]["dry_run"])
     guaranteed = bool(cfg["ig"]["guaranteed_stop"])
 
-    # --- Dealing rules (min stop distance & step) ---
+    # Dealing rules
     md = broker.market_details(epic)
     rules = md.get("dealingRules", {})
     min_stop = float(rules.get("minStopOrLimitDistance", {}).get("value", 0.0))
@@ -50,16 +59,27 @@ def main(cfg_path="configs/live_config.yaml"):
     print(f"ℹ️ {epic} min_stop={min_stop} step={step_stop}")
 
     def clamp_distance(d):
-        # obey min stop and step increment
-        if d < min_stop: d = min_stop
-        # round up to the next step increment
-        if step_stop > 0:
+        if d < min_stop:
+            d = min_stop
+        if step_stop and step_stop > 0:
             k = int((d + 1e-9) / step_stop)
             if abs(k * step_stop - d) > 1e-9:
                 d = (k + 1) * step_stop
         return d
 
-    # --- Bar queue so LS thread never blocks on network I/O ---
+    # Preflight
+    pf = preflight_can_trade(broker, epic, size)
+    if not pf.ok:
+        logging.error(f"❌ Preflight failed: {pf.reason}")
+        return
+    logging.info("✅ Preflight OK")
+
+    # MongoDB logger
+    mongo = MongoLogger()
+
+    gate = PositionGate(broker, refresh_sec=5.0)
+
+    # Bar queue
     bar_q: Queue = Queue(maxsize=200)
     bars = []
 
@@ -67,11 +87,11 @@ def main(cfg_path="configs/live_config.yaml"):
         try:
             bar_q.put_nowait(bar)
         except:
-            # drop oldest to keep up
-            _ = bar_q.get_nowait()
+            try: _ = bar_q.get_nowait()
+            except: pass
             bar_q.put_nowait(bar)
 
-    # --- Strategy worker thread ---
+    # Strategy worker
     def worker():
         nonlocal bars
         while True:
@@ -83,50 +103,102 @@ def main(cfg_path="configs/live_config.yaml"):
                 row = {"Datetime": pd.to_datetime(bar.ts_open, unit="s"),
                        "Open": bar.open, "High": bar.high, "Low": bar.low, "Close": bar.close}
                 bars.append(row)
-
-                # tiny console breadcrumb for each completed bar
-                if len(bars) % 1 == 0:  # change to 5/10 if too chatty
-                    print(f"🧱 BAR {row['Datetime']} O:{bar.open:.2f} H:{bar.high:.2f} L:{bar.low:.2f} C:{bar.close:.2f}")
+                print(f"🧱 BAR {row['Datetime']} O:{bar.open:.2f} H:{bar.high:.2f} L:{bar.low:.2f} C:{bar.close:.2f}")
 
                 if len(bars) < 3:
-                    continue  # need at least 3 bars for SL-from-last-2
+                    continue
 
                 df = pd.DataFrame(bars).set_index("Datetime")
 
-                # === EXACT ENTRY RULE ===
+                # signal
                 cross = rsi_cross_up(df["Close"], level=lvl, period=2)
-                if not bool(cross.iloc[-1]):
+                rsi_series = rsi(df["Close"], period=2)
+                current_rsi = float(rsi_series.iloc[-1]) if len(rsi_series) > 0 else 0.0
+
+                if not cross.iloc[-1]:
                     continue
 
-                # one-open-trade gate (read once per bar)
-                has_open = bool(broker.open_positions())
-                if has_open:
-                    print("⛔ Skip: existing open position")
+                gate.refresh_if_due()
+                if gate.has_open():
+                    print("⛔ Skip: existing open position (gated)")
                     continue
 
                 idx = len(df) - 1
-                pack = compute_sl_tp_fixed_rr(df, idx, rr) if mode == "fixed" else compute_tp_gapN(df, idx, float(cfg["strategy"].get("N", 3)))
+                pack = compute_sl_tp_fixed_rr(df, idx, rr) if mode == "fixed" else compute_tp_gapN(df, idx, float(cfg["strategy"].get("N", 3.0)))
                 if not pack:
                     print("⚠️ Skip: non-positive risk / pack None")
+                    # Log rejected signal
+                    mongo.log_signal(
+                        epic=epic,
+                        signal_type="REJECTED",
+                        bar_data={"datetime": row['Datetime'], "open": row['Open'], "high": row['High'],
+                                  "low": row['Low'], "close": row['Close']},
+                        rsi_value=current_rsi,
+                        entry_price=row['Close'],
+                        sl=0.0,
+                        tp=0.0,
+                        reason="Non-positive risk or pack None"
+                    )
                     continue
 
                 stop_dist, limit_dist = price_to_dist(pack["entry"], pack["sl"], pack["tp"])
                 stop_dist, limit_dist = clamp_distance(stop_dist), clamp_distance(limit_dist)
 
+                # Log signal to MongoDB
+                mongo.log_signal(
+                    epic=epic,
+                    signal_type="BUY",
+                    bar_data={"datetime": row['Datetime'], "open": row['Open'], "high": row['High'],
+                              "low": row['Low'], "close": row['Close']},
+                    rsi_value=current_rsi,
+                    entry_price=pack['entry'],
+                    sl=pack['sl'],
+                    tp=pack['tp'],
+                    reason="RSI cross-up signal"
+                )
+
                 if dry:
                     print(f"[DRY] LONG {epic} @{pack['entry']:.2f} SLd={stop_dist:.2f} LId={limit_dist:.2f}")
+                    log_trade_csv(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                  side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                  dry_run=True, status="DRY_OK", reason="signal")
+                    # Log to MongoDB
+                    mongo.log_trade(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                    side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                    dry_run=True, status="DRY_OK", reason="signal")
                 else:
                     res = broker.place_otc_market(epic, size, "BUY", stop_dist, limit_dist, guaranteed)
-                    print(res)
+                    ok = bool(res.get("ok"))
+                    if ok:
+                        gate.mark_open()
+                        broker_ref = res.get("confirm", {}).get("dealId", "") or res.get("confirm", {}).get("dealReference", "")
+                        print(f"✅ LIVE order accepted. Ref={broker_ref}")
+                        log_trade_csv(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                      side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                      dry_run=False, status="LIVE_OK", broker_ref=broker_ref)
+                        # Log to MongoDB
+                        mongo.log_trade(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                        side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                        dry_run=False, status="LIVE_OK", broker_ref=broker_ref)
+                    else:
+                        err = res.get("error", "UNKNOWN_ERROR")
+                        print(f"❌ LIVE order failed: {err}")
+                        log_trade_csv(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                      side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                      dry_run=False, status="LIVE_FAIL", reason=err)
+                        # Log to MongoDB
+                        mongo.log_trade(epic=epic, mode=mode, rr_or_N=str(rr if mode=='fixed' else cfg['strategy'].get('N')),
+                                        side="BUY", entry_px=pack['entry'], stop_distance=stop_dist, limit_distance=limit_dist,
+                                        dry_run=False, status="LIVE_FAIL", reason=err)
             except Exception as e:
                 print(f"⚠️ Worker error: {e}")
 
     t = threading.Thread(target=worker, daemon=True); t.start()
 
-    # --- Lightstreamer auth + streaming ---
+    # Streaming (LS or REST polling)
     CST, XST, LS_ENDPOINT, ACCOUNT_ID = authenticate_for_stream(auth)
-    client, sub = start_streaming(LS_ENDPOINT, ACCOUNT_ID, CST, XST, epic=epic, timeframe_sec=tf, on_bar=on_bar)
-    print(f"📡 Streaming {epic} on {auth.account_type}… (timeframe={tf}s)  dry_run={dry}")
+    client, sub = start_streaming(LS_ENDPOINT, ACCOUNT_ID, CST, XST, epic=epic, timeframe_sec=tf, on_bar=on_bar, broker=broker)
+    print(f"📡 Feeding {epic} (tf={tf}s)  dry_run={dry}  mode={'REST_POLL' if isinstance(client, dict) else 'LIGHTSTREAMER'}")
 
     try:
         while True:
@@ -135,6 +207,7 @@ def main(cfg_path="configs/live_config.yaml"):
         pass
     finally:
         stop_streaming(client, sub)
+        mongo.close()
 
 if __name__ == "__main__":
     main()
