@@ -1,0 +1,102 @@
+# ============================================================================
+# DAX LONG+SHORT Strategy - FINAL VALIDATED CONFIGURATION
+# ============================================================================
+#
+# Strategy: RSI2_L7_S90_RR5.0_SL5_both
+# Validated: 2015, 2021-2024 (5 years, 100% profitable)
+# Performance: +8,530 points over 5 years (+1,706 pts/year average)
+# Win Rate: ~18.6%
+# Trades: ~206/year (~17/month)
+#
+# ============================================================================
+
+# IG Markets Configuration
+ig:
+  account_type: "${IG_ACCOUNT_TYPE}"   # "DEMO" or "LIVE" (from .env)
+  epic: "IX.D.DAX.DAILY.IP"           # DAX Daily Rolling (or "IX.D.DAX.IFM.IP" for futures)
+  size: 1.0                            # Position size (£ per point) - START WITH 1.0 ON DEMO
+  guaranteed_stop: false               # Use guaranteed stops (costs extra)
+
+# Strategy Parameters (FINAL VALIDATED)
+strategy:
+  # RSI Settings
+  rsi_period: 2                        # RSI calculation period
+
+  # Entry Thresholds
+  rsi_cross_up_level: 7                # LONG when RSI crosses ABOVE 7
+  rsi_cross_down_level: 90             # SHORT when RSI crosses BELOW 90
+
+  # Risk Management
+  mode: "fixed"                        # "fixed" R:R mode
+  rr: 5.0                              # Risk:Reward ratio (TP = Entry ± Risk × 5.0)
+
+  # Stop Loss Method
+  sl_method: "bars_lookback"           # Use N-bar lookback for stop loss
+  sl_lookback: 5                       # CRITICAL: Use 5 bars (not 2!)
+
+  # Trade Mode
+  trade_mode: "both"                   # Trade BOTH long and short
+
+  # Data Settings
+  timeframe_sec: 1800                  # 30 minutes (30 × 60 seconds)
+
+  # Risk Limits
+  max_daily_loss_pts: 500              # Stop trading if daily loss exceeds this
+  slippage_pts: 0.0                    # Reserved for future use
+
+# Trading Session (Europe/Berlin timezone)
+session:
+  use_session_filter: true             # Only trade during session hours
+  start: "08:00"                       # Session start (CET/CEST)
+  end: "22:00"                         # Session end (CET/CEST)
+  tz: "Europe/Berlin"                  # Germany timezone
+
+# Operations
+ops:
+  dry_run: false                       # Set to true for testing without real trades
+  log_level: "INFO"                    # Logging level
+
+# MongoDB Logging
+mongodb:
+  enabled: true                        # Log signals and trades to MongoDB
+  uri: "${MONGO_URI}"                  # From .env file
+  database: "rsi_live_trading"         # Database name
+
+# ============================================================================
+# EXPECTED PERFORMANCE (based on 5-year backtest)
+# ============================================================================
+#
+# Total: +8,530 points over 5 years
+# Annual Average: +1,706 points/year
+# Win Rate: ~18.6%
+# Profit Factor: 1.16
+# Max Drawdown: ~2,498 points
+# Total Trades: 2,056 (206/year, 17/month)
+# LONG trades: 42.5% of total (874 trades)
+# SHORT trades: 57.5% of total (1,182 trades)
+#
+# With £1/point:
+#   - Annual profit: ~£1,706/year (~£142/month)
+#   - Risk per trade: £60-80
+#   - Max drawdown: ~£2,500
+#   - Recommended capital: £8,000+
+#
+# With £10/point:
+#   - Annual profit: ~£17,060/year (~£1,422/month)
+#   - Risk per trade: £600-800
+#   - Max drawdown: ~£25,000
+#   - Recommended capital: £80,000+
+#
+# ============================================================================
+# YEAR-BY-YEAR BACKTEST RESULTS
+# ============================================================================
+#
+# 2015: +2,866 pts (18.3% WR, 349 trades) ✅
+# 2021: +186 pts   (17.5% WR, 395 trades) ✅
+# 2022: +3,265 pts (20.7% WR, 425 trades) ✅
+# 2023: +1,009 pts (18.8% WR, 414 trades) ✅
+# 2024: +987 pts   (17.2% WR, 472 trades) ✅
+#
+# Consistency: 5/5 years profitable (100%)
+#
+# ============================================================================

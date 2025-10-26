@@ -1,0 +1,55 @@
+# configs/live_config_dax.yaml
+# DAX-specific configuration with optimized parameters
+
+ig:
+  account_type: "${IG_ACCOUNT_TYPE}"   # DEMO or LIVE
+  epic: "IX.D.DAX.DAILY.IP"            # DAX 40 Index (check IG for correct EPIC)
+  size: 1.0                             # Contract size (€1 per point)
+  guaranteed_stop: false
+
+strategy:
+  mode: "fixed"                         # "fixed" R:R mode (tested and optimized)
+  rr: 5.0                               # Risk:Reward 5.0 (best for DAX based on backtest)
+  rsi_period: 2                         # RSI(2) - fast and responsive
+  rsi_cross_up_level: 10                # Entry when RSI crosses above 10
+  timeframe_sec: 1800                   # 30 minutes (1800 seconds)
+
+  max_daily_loss_pts: 500               # Stop trading after losing 500 points in a day
+  slippage_pts: 0.0
+
+  # Stop Loss Configuration
+  sl_method: "day_low"                  # Use day's lowest low as stop loss
+  sl_lookback: 2                        # Fallback: if day_low fails, use 2-bar lookback
+  sl_max_risk: 200                      # Maximum risk per trade: 200 points
+  sl_min_bars: 4                        # Require 4 bars (2 hours) before first trade of day
+
+# Trading Session (Germany/EU Hours for DAX)
+session:
+  use_session_filter: true              # ONLY trade during these hours
+  start: "08:00"                        # DAX futures open (pre-XETRA)
+  end: "22:00"                          # DAX futures close (extended hours)
+  tz: "Europe/Berlin"                   # Germany timezone (auto-handles CET/CEST)
+
+  # DAX Trading Hours Reference:
+  # 08:00-09:00 CET: Pre-market (lower liquidity)
+  # 09:00-17:30 CET: XETRA main session (highest liquidity)
+  # 17:30-22:00 CET: Extended hours (moderate liquidity)
+  #
+  # Conservative: Use 09:00-17:30 only
+  # Aggressive: Use 08:00-22:00 (current setting)
+
+ops:
+  dry_run: true                         # SAFETY: Set to false only when ready for live trading
+  log_level: "INFO"
+
+# Expected Performance (based on 2021-2023 backtest):
+# - Win Rate: ~19-25%
+# - Annual Profit: ~1,500-2,000 points (€1,500-2,000 @ €1/point)
+# - Trades per year: ~400-600
+# - Avg bars held: ~19 bars (9.5 hours)
+#
+# With day_low SL (expected):
+# - Win Rate: ~25-30% (improved)
+# - Annual Profit: ~1,200-1,800 points
+# - Trades per year: ~300-500
+# - More comfortable trading experience

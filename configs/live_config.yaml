@@ -15,6 +15,21 @@ strategy:
   max_daily_loss_pts: 500
   slippage_pts: 0.0
 
+  # Stop Loss Method
+  sl_method: "day_low"  # "bars_lookback" | "day_low" | "fixed_points"
+  sl_lookback: 2        # For "bars_lookback": use lowest of last N bars
+  sl_max_risk: 200      # For "day_low": maximum risk in points (optional cap)
+  sl_min_bars: 4        # For "day_low": minimum bars required before first trade
+
+# Trading Session (EU/Germany Hours for DAX)
+session:
+  use_session_filter: true    # Only trade during specified hours
+  start: "08:00"              # XETRA pre-market / DAX futures open
+  end: "22:00"                # DAX futures close (extended hours)
+  tz: "Europe/Berlin"         # Germany timezone (CET/CEST)
+  # Note: XETRA main session is 09:00-17:30 CET
+  #       Extended hours 08:00-22:00 for DAX futures
+
 ops:
   dry_run: false
   log_level: "INFO"

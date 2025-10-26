@@ -210,10 +210,24 @@ def stop_streaming(client, subscription):
         if poller:
             poller.stop()
         return
+
+    # Unsubscribe from all subscriptions
     try:
-        client.unsubscribe(subscription)
+        if isinstance(subscription, dict):
+            # Multiple subscriptions (price + account)
+            for sub in subscription.values():
+                if sub:
+                    try:
+                        client.unsubscribe(sub)
+                    except Exception:
+                        pass
+        else:
+            # Single subscription (backward compatibility)
+            client.unsubscribe(subscription)
     except Exception:
         pass
+
+    # Disconnect client
     try:
         client.disconnect()
     except Exception:
@@ -221,10 +235,13 @@ def stop_streaming(client, subscription):
 
 def start_streaming(ls_endpoint: str, account_id: str, CST: str, XST: str,
                     epic: str, timeframe_sec: int, on_bar: "OnBar",
-                    broker=None) -> Tuple[Any, Any]:
+                    broker=None, position_gate=None) -> Tuple[Any, Any]:
     """
     Try Lightstreamer if lib present, else REST polling.
     Returns (client, subscription) handles for stop_streaming().
+
+    Args:
+        position_gate: Optional PositionGate instance to receive position updates
     """
     use_poll = os.getenv("USE_REST_POLLING", "false").lower() == "true"
     if use_poll:
@@ -252,6 +269,7 @@ def start_streaming(ls_endpoint: str, account_id: str, CST: str, XST: str,
 
     bb = BarBuilder(timeframe_sec)
 
+    # Price data subscription
     def on_item_update(item_update):
         try:
             values = item_update.getFields()
@@ -267,12 +285,65 @@ def start_streaming(ls_endpoint: str, account_id: str, CST: str, XST: str,
         except Exception as e:
             print("LS parse error:", e)
 
-    sub = Subscription(
+    price_sub = Subscription(
         mode="MERGE",
         items=[f"MARKET:{epic}"],
         fields=["BID", "OFR"]  # "OFR" is IG's name for offer/ask on LS
     )
-    sub.addListener({"onItemUpdate": on_item_update})
-    ls_client.subscribe(sub)
+    price_sub.addListener({"onItemUpdate": on_item_update})
+    ls_client.subscribe(price_sub)
 
-    return ls_client, sub
+    # Position updates subscription (if position_gate provided)
+    account_sub = None
+    if position_gate:
+        try:
+            def on_account_update(item_update):
+                try:
+                    values = item_update.getFields()
+                    # IG Lightstreamer sends various account updates
+                    # Key fields: CONFIRMS (trade confirmations), OPU (Open Position Updates)
+                    confirms = values.get("CONFIRMS")
+                    opu = values.get("OPU")
+
+                    # Parse confirmations for position opens/closes
+                    if confirms:
+                        # Confirmation format varies - we look for dealStatus
+                        # ACCEPTED = position opened, CLOSED = position closed
+                        deal_status = values.get("dealStatus", "")
+                        deal_id = values.get("dealId", "")
+
+                        if deal_status == "ACCEPTED":
+                            position_gate.on_position_event("OPENED", deal_id=deal_id)
+                        elif deal_status in ["CLOSED", "DELETED"]:
+                            position_gate.on_position_event("CLOSED", deal_id=deal_id)
+
+                    # OPU gives us position count directly
+                    if opu is not None:
+                        try:
+                            opu_count = int(opu)
+                            if opu_count == 0:
+                                position_gate.on_position_event("CLOSED", deal_id="opu_count")
+                            elif opu_count > 0:
+                                position_gate.on_position_event("OPENED", deal_id="opu_count")
+                        except (ValueError, TypeError):
+                            pass
+
+                except Exception as e:
+                    print(f"⚠️ LS account update parse error: {e}")
+
+            # Subscribe to account-level updates
+            account_sub = Subscription(
+                mode="MERGE",
+                items=[f"ACCOUNT:{account_id}"],
+                fields=["CONFIRMS", "OPU", "WOU", "FUNDS", "AVAILABLE_TO_DEAL"]
+            )
+            account_sub.addListener({"onItemUpdate": on_account_update})
+            ls_client.subscribe(account_sub)
+            print("✅ Lightstreamer position tracking enabled")
+
+        except Exception as e:
+            print(f"⚠️ Failed to subscribe to account updates: {e}")
+            print("   Continuing with fallback polling only...")
+
+    # Return both subscriptions (price + account)
+    return ls_client, {"price": price_sub, "account": account_sub}
