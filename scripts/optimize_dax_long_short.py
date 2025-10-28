@@ -31,12 +31,12 @@ TIMEZONE = pytz.timezone("Europe/Berlin")
 SESSION_START = time(8, 0)   # 08:00 CET
 SESSION_END = time(22, 0)    # 22:00 CET
 
-# Parameter grid to test (proven winners from previous tests)
+# Parameter grid to test (expanded search space)
 RSI_PERIODS = [2, 3, 4]
-LONG_THRESHOLDS = [5, 7, 10, 15]      # LONG when RSI crosses ABOVE these
-SHORT_THRESHOLDS = [70, 80, 90, 95]   # SHORT when RSI crosses BELOW these
+LONG_THRESHOLDS = [5, 7, 10, 12, 15]      # LONG when RSI crosses ABOVE these (added 12)
+SHORT_THRESHOLDS = [70, 80, 85, 90, 95]   # SHORT when RSI crosses BELOW these (added 85)
 RR_RATIOS = [2.0, 3.0, 4.0, 5.0]
-SL_LOOKBACK_PERIODS = [2, 3, 4, 5]    # Test multiple SL lookback periods
+SL_LOOKBACK_PERIODS = [2, 3, 4, 5]        # Test multiple SL lookback periods
 
 # Trading modes
 TRADE_MODES = ["long_only", "short_only", "both"]
@@ -252,6 +252,13 @@ def backtest_long_short(df, rsi_period, long_threshold, short_threshold,
     long_trades = len(trades_df[trades_df["side"] == "LONG"])
     short_trades = len(trades_df[trades_df["side"] == "SHORT"])
 
+    # Calculate additional useful metrics
+    avg_win = wins["pnl_pts"].mean() if not wins.empty else 0.0
+    avg_loss = losses["pnl_pts"].mean() if not losses.empty else 0.0
+    avg_bars_held = trades_df["bars_held"].mean()
+    long_win_rate = (len(wins[wins["side"] == "LONG"]) / long_trades * 100) if long_trades > 0 else 0.0
+    short_win_rate = (len(wins[wins["side"] == "SHORT"]) / short_trades * 100) if short_trades > 0 else 0.0
+
     return {
         "trades": len(trades_df),
         "wins": len(wins),
@@ -259,10 +266,17 @@ def backtest_long_short(df, rsi_period, long_threshold, short_threshold,
         "long_trades": long_trades,
         "short_trades": short_trades,
         "win_rate_pct": round(100 * len(wins) / len(trades_df), 1),
+        "long_win_rate_pct": round(long_win_rate, 1),
+        "short_win_rate_pct": round(short_win_rate, 1),
         "total_pnl_pts": round(trades_df["pnl_pts"].sum(), 2),
         "profit_factor": round(pf, 2),
         "expectancy": round(trades_df["pnl_pts"].mean(), 2),
-        "max_dd_pts": round(max_dd, 2)
+        "avg_win_pts": round(avg_win, 2),
+        "avg_loss_pts": round(avg_loss, 2),
+        "max_dd_pts": round(max_dd, 2),
+        "avg_bars_held": round(avg_bars_held, 1),
+        "total_win_pts": round(total_win_pts, 2),
+        "total_loss_pts": round(total_loss_pts, 2)
     }
 
 
@@ -364,6 +378,13 @@ def main():
                             result["sl_lookback"] = sl_lookback
                             result["trade_mode"] = trade_mode
                             result["variant"] = variant_name
+
+                            # Add helper columns for easier filtering
+                            result["is_profitable"] = 1 if result["total_pnl_pts"] > 0 else 0
+                            result["pf_above_1.1"] = 1 if result["profit_factor"] > 1.1 else 0
+                            result["pf_above_1.2"] = 1 if result["profit_factor"] > 1.2 else 0
+                            result["wr_above_15"] = 1 if result["win_rate_pct"] > 15 else 0
+                            result["wr_above_20"] = 1 if result["win_rate_pct"] > 20 else 0
 
                             all_results.append(result)
 

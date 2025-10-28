@@ -1,0 +1,110 @@
+# ============================================================================
+# DAX Advanced Optimizer Configuration
+# ============================================================================
+#
+# This config tests FIXED TAKE PROFIT levels instead of Risk:Reward ratios
+# Includes optional session filters to skip volatile market open periods
+#
+# Total Combinations: 4,500 × 2 (with/without filters) = 9,000 tests
+#
+# ============================================================================
+
+# Data Settings
+data:
+  source_dir: "data/dax_monthly"
+  timeframe_sec: 1800  # 30 minutes
+  timezone: "Europe/Berlin"
+
+# Parameter Grid
+parameters:
+  # RSI Settings
+  rsi_periods: [2, 3, 4]
+
+  # Entry Thresholds
+  long_thresholds: [5, 7, 10, 12, 15]
+  short_thresholds: [70, 80, 85, 90, 95]
+
+  # Take Profit - Tests BOTH approaches!
+  fixed_tp_points: [5, 10, 15, 20, 25]  # Fixed TP in points
+  rr_ratios: [2.0, 3.0, 5.0]             # Risk:Reward ratios
+
+  # Stop Loss Lookback
+  sl_lookback: [2, 3, 4, 5]
+
+  # Trade Modes
+  trade_modes: ["long_only", "short_only", "both"]
+
+# Session Filters (Test WITH and WITHOUT)
+session_filters:
+  # Filter 1: Skip DAX market open (first 30 minutes)
+  skip_dax_open:
+    enabled: [true, false]  # Test both scenarios
+    start_time: "08:00"
+    duration_mins: 30
+    # Trades allowed from 08:30 onwards when enabled
+
+  # Filter 2: Skip US market open (30 minutes around 15:30 CET)
+  skip_us_open:
+    enabled: [true, false]  # Test both scenarios
+    us_open_time_et: "09:30"  # Eastern Time
+    duration_mins: 30
+    handle_dst: true  # Automatically adjust for DST transitions
+    # Skip 15:30-16:00 CET (winter) or 15:30-16:00 CEST (summer)
+
+# Base Session (Always Applied)
+base_session:
+  use_session_filter: true
+  start: "08:00"
+  end: "22:00"
+  tz: "Europe/Berlin"
+
+# Output Settings
+output:
+  results_dir: "results/dax_advanced"
+  results_file: "dax_advanced_results.csv"
+  append_mode: true  # Append each result immediately
+  save_frequency: "immediate"  # Save after each combo (not batch)
+
+# Risk Limits (for analysis, not enforced during backtest)
+risk:
+  max_risk_per_trade_pts: 200
+  daily_loss_limit_pts: 500
+  max_trades_per_day: 10
+
+# Performance Filters (for CSV analysis)
+filters:
+  min_trades: 50  # Flag combos with < 50 trades
+  min_profit_factor: 1.0
+  min_win_rate_pct: 10.0
+
+# ============================================================================
+# COMBINATION CALCULATION
+# ============================================================================
+#
+# Base combinations:
+#   RSI periods: 3
+#   LONG thresholds: 5
+#   SHORT thresholds: 5
+#   Fixed TP: 5 + R:R ratios: 3 = 8 TP variations
+#   SL lookback: 4
+#   Trade modes: 3
+#   = 3 × 5 × 5 × 8 × 4 × 3 = 7,200
+#
+# Session filter variations:
+#   Skip DAX open: [true, false] = 2
+#   Skip US open: [true, false] = 2
+#   But we test: (both enabled) vs (both disabled) = 2 scenarios
+#
+# TOTAL: 7,200 × 2 = 14,400 tests
+#
+# ============================================================================
+# EXPECTED RUNTIME
+# ============================================================================
+#
+# With ~40,000 bars across all monthly files:
+#   - ~0.5 seconds per combo
+#   - 14,400 combos × 0.5s = 7,200 seconds = 120 minutes (2 hours)
+#
+# Progressive saving ensures no data loss if interrupted
+#
+# ============================================================================
