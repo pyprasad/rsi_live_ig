@@ -16,6 +16,9 @@ from pathlib import Path
 import pandas as pd
 import multiprocessing as mp
 import warnings
+import time
+from datetime import datetime
+import os
 warnings.filterwarnings('ignore')
 
 
@@ -46,6 +49,11 @@ CONFIG = {
 
 DATA_DIR = Path("data/dax_monthly")
 OUTPUT_DIR = Path("results/dax_super_optimizer")
+
+# Global for progress tracking
+completed_count = mp.Value('i', 0)
+total_count = mp.Value('i', 0)
+start_time = None
 
 
 # ==================== HELPER FUNCTIONS ====================
@@ -276,6 +284,14 @@ def process_strategy(args):
 
     strategy_name = f"{mode}_TP{tp}_SL{sl}{trail_str}{hold_str}{cool_str}"
 
+    # Check if already completed
+    result_file = OUTPUT_DIR / "results" / f"{strategy_name}.csv"
+    if result_file.exists():
+        # Skip already completed strategy
+        with completed_count.get_lock():
+            completed_count.value += 1
+        return None, None
+
     # Load all monthly files
     csv_files = sorted(DATA_DIR.glob("*.csv"))
     all_trades = []
@@ -294,63 +310,10 @@ def process_strategy(args):
 
         all_trades.extend(trades)
 
-    return strategy_name, all_trades
+    # Calculate summary metrics
+    if len(all_trades) > 0:
+        trades_df = pd.DataFrame(all_trades)
 
-
-# ==================== MAIN ====================
-
-def main():
-    print("=" * 100)
-    print("DAX RSI SUPER OPTIMIZER")
-    print("Finding the most profitable strategy combination")
-    print("=" * 100)
-    print()
-
-    # Generate all combinations
-    strategies = []
-    for mode in CONFIG['modes']:
-        for tp in CONFIG['profit_targets']:
-            for sl in CONFIG['stop_loss_points']:
-                # Skip if SL >= TP (doesn't make sense)
-                if sl >= tp * 2:  # Allow SL up to 2x TP
-                    for max_hold in CONFIG['max_hold_minutes']:
-                        for trail in CONFIG['trailing_stop_points']:
-                            for cooldown in CONFIG['cooldown_minutes']:
-                                strategies.append((mode, tp, sl, max_hold, trail, cooldown))
-
-    print(f"📊 Testing {len(strategies)} strategy combinations...")
-    print(f"   Profit Targets: {CONFIG['profit_targets']}")
-    print(f"   Stop Loss: {CONFIG['stop_loss_points']}")
-    print(f"   Max Hold: {CONFIG['max_hold_minutes']}")
-    print(f"   Trailing Stop: {CONFIG['trailing_stop_points']}")
-    print(f"   Cooldown: {CONFIG['cooldown_minutes']}")
-    print(f"   Modes: {CONFIG['modes']}")
-    print()
-    print(f"🚀 Using {mp.cpu_count()-1} parallel processes")
-    print()
-
-    # Create output directory
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Run in parallel
-    with mp.Pool(processes=mp.cpu_count()-1) as pool:
-        results = pool.map(process_strategy, strategies)
-
-    print("✅ Backtesting complete!")
-    print()
-
-    # Process results
-    print("📁 Analyzing results...")
-
-    all_summary = []
-
-    for strategy_name, trades in results:
-        if not trades or len(trades) == 0:
-            continue
-
-        trades_df = pd.DataFrame(trades)
-
-        # Calculate metrics
         total_pnl = trades_df['net_pnl'].sum()
         wins = len(trades_df[trades_df['net_pnl'] > 0])
         losses = len(trades_df[trades_df['net_pnl'] <= 0])
@@ -360,18 +323,16 @@ def main():
         gross_loss = abs(trades_df[trades_df['net_pnl'] <= 0]['net_pnl'].sum()) if losses > 0 else 0
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
 
-        # Monthly breakdown
         monthly = trades_df.groupby('month')['net_pnl'].sum()
         profitable_months = len(monthly[monthly > 0])
         total_months = len(monthly)
         consistency = profitable_months / total_months * 100 if total_months > 0 else 0
 
-        # Average metrics
         avg_hold = trades_df['hold_minutes'].mean()
         avg_win = trades_df[trades_df['net_pnl'] > 0]['net_pnl'].mean() if wins > 0 else 0
         avg_loss = trades_df[trades_df['net_pnl'] <= 0]['net_pnl'].mean() if losses > 0 else 0
 
-        all_summary.append({
+        summary = {
             'strategy': strategy_name,
             'total_trades': len(trades_df),
             'wins': wins,
@@ -385,7 +346,107 @@ def main():
             'profitable_months': profitable_months,
             'total_months': total_months,
             'consistency': consistency,
-        })
+        }
+
+        # Save individual result immediately
+        result_df = pd.DataFrame([summary])
+        result_df.to_csv(result_file, index=False)
+    else:
+        summary = None
+
+    # Update progress
+    with completed_count.get_lock():
+        completed_count.value += 1
+        count = completed_count.value
+        total = total_count.value
+
+        # Log progress every 100 strategies
+        if count % 100 == 0 or count == total:
+            elapsed = time.time() - start_time
+            rate = count / elapsed if elapsed > 0 else 0
+            remaining = (total - count) / rate if rate > 0 else 0
+
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {count}/{total} ({count/total*100:.1f}%) | "
+                  f"Rate: {rate:.1f}/s | ETA: {remaining/60:.0f}m | "
+                  f"Latest: {strategy_name[:50]}")
+
+    return strategy_name, summary
+
+
+# ==================== MAIN ====================
+
+def main():
+    global start_time
+
+    print("=" * 100)
+    print("DAX RSI SUPER OPTIMIZER")
+    print("Finding the most profitable strategy combination")
+    print("=" * 100)
+    print()
+
+    # Create output directories
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_DIR / "results").mkdir(exist_ok=True)
+
+    # Generate all combinations
+    strategies = []
+    for mode in CONFIG['modes']:
+        for tp in CONFIG['profit_targets']:
+            for sl in CONFIG['stop_loss_points']:
+                # Skip if SL >= TP (doesn't make sense)
+                if sl >= tp * 2:  # Allow SL up to 2x TP
+                    for max_hold in CONFIG['max_hold_minutes']:
+                        for trail in CONFIG['trailing_stop_points']:
+                            for cooldown in CONFIG['cooldown_minutes']:
+                                strategies.append((mode, tp, sl, max_hold, trail, cooldown))
+
+    # Check for already completed strategies
+    existing_results = list((OUTPUT_DIR / "results").glob("*.csv"))
+    already_completed = len(existing_results)
+
+    print(f"📊 Total strategy combinations: {len(strategies)}")
+    if already_completed > 0:
+        print(f"✅ Already completed: {already_completed}")
+        print(f"⏭️  Remaining: {len(strategies) - already_completed}")
+    print()
+    print(f"Parameters:")
+    print(f"   Profit Targets: {CONFIG['profit_targets']}")
+    print(f"   Stop Loss: {CONFIG['stop_loss_points']}")
+    print(f"   Max Hold: {CONFIG['max_hold_minutes']}")
+    print(f"   Trailing Stop: {CONFIG['trailing_stop_points']}")
+    print(f"   Cooldown: {CONFIG['cooldown_minutes']}")
+    print(f"   Modes: {CONFIG['modes']}")
+    print()
+    print(f"🚀 Using {mp.cpu_count()-1} parallel processes")
+    print(f"💾 Results saved progressively to: {OUTPUT_DIR / 'results'}")
+    print()
+
+    # Set total count for progress tracking
+    total_count.value = len(strategies)
+    completed_count.value = 0
+    start_time = time.time()
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting optimization...")
+    print()
+
+    # Run in parallel
+    with mp.Pool(processes=mp.cpu_count()-1) as pool:
+        results = pool.map(process_strategy, strategies)
+
+    print()
+    print("✅ Backtesting complete!")
+    print()
+
+    # Process results - load from saved files
+    print("📁 Collecting all results...")
+
+    all_summary = []
+    result_files = list((OUTPUT_DIR / "results").glob("*.csv"))
+
+    for result_file in result_files:
+        df = pd.read_csv(result_file)
+        if len(df) > 0:
+            all_summary.append(df.iloc[0].to_dict())
 
     # Save summary
     summary_df = pd.DataFrame(all_summary)
