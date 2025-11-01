@@ -7,9 +7,9 @@ import pandas as pd
 from pathlib import Path
 
 # Configuration
-DB_PATH = "dax_2012.db"  # 206MB database with tick data
+DB_PATH = "dax_2024.db"  # 206MB database with tick data
 OUTPUT_DIR = Path("data/dax_monthly")
-TIMEFRAME = "30T"  # 30 minutes
+TIMEFRAME = "5T"  # 5 minutes
 PRICE_DIVISOR = 10.0  # Divide prices by 10 to fix scaling issue
 
 def main():

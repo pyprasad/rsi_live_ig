@@ -1,4 +1,13 @@
 """
+
+For future purpose:
+
+can you update the scripts/optimize_dax_advanced.py to record the correct details in the results file 
+
+going forward we will ensure that the results file captures all relevant details for each test scenario, including:
+- Year and month details corresponding to the date range of the trades executed in that scenario.
+
+
 DAX Advanced Optimizer - Fixed Take Profit + Session Filters
 
 Key Differences from Previous Optimizer:

@@ -146,3 +146,9 @@ rsi-live-ig/
 ├── results/                  # Backtest outputs & trade logs
 ├── MONGODB_SETUP.md          # Detailed MongoDB guide
 └── README.md                 # This file
+
+
+Super Optimizezr for DAX  (RSI 2 , 95, 5)
+
+python scripts/optimize_dax_super.py
+

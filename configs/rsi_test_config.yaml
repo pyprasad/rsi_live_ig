@@ -1,0 +1,27 @@
+# RSI Strategy Test Configuration
+
+# Data Fetching
+data:
+  epic: "IX.D.DAX.DAILY.IP"      # DAX 40 (Change to your epic)
+  timeframe: "5Min"               # Options: 1Min, 5Min, 15Min, 30Min, 1Hour, 4Hour, Day
+  max_candles: 10000              # Maximum candles to fetch (IG limit: 10,000)
+  output_folder: "data/fetched"
+
+# RSI Strategy Settings
+strategy:
+  rsi_period: 14                  # RSI period
+  buy_level: 30                   # Buy when RSI crosses above 30
+  sell_level: 70                  # Sell when RSI crosses below 70
+
+  # Take Profit levels to test (in points)
+  take_profit_levels:
+    - 5
+    - 10
+    - 15
+
+  # Stop Loss (in points) - optional, set to null to disable
+  stop_loss: 20
+
+# Results
+results:
+  output_folder: "results/rsi_tests"
