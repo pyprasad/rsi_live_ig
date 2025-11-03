@@ -248,22 +248,22 @@ def start_streaming(ls_endpoint: str, account_id: str, CST: str, XST: str,
         return _start_rest_poll(epic, timeframe_sec, broker, on_bar)
 
     try:
-        from lightstreamer.client import LSClient, Subscription
+        from lightstreamer.client import LightstreamerClient as LSClient, Subscription
     except Exception:
         # library not installed → fallback
         return _start_rest_poll(epic, timeframe_sec, broker, on_bar)
 
     # ✅ Correct LS auth: adapter set "DEFAULT", then set user/password
     ls_client = LSClient(ls_endpoint, "DEFAULT")
-    # Some SDKs expose connection options; others set at client level:
+    # Current library uses connectionDetails (not connectionOptions)
     try:
-        # Python SDK v1 style:
+        # Try connectionOptions first (old SDK style)
         ls_client.connectionOptions.setUser(account_id)
         ls_client.connectionOptions.setPassword(f"CST-{CST}|XST-{XST}")
     except Exception:
-        # Older style fallback (if attributes differ)
-        ls_client.set_user(account_id)
-        ls_client.set_password(f"CST-{CST}|XST-{XST}")
+        # Current library uses connectionDetails
+        ls_client.connectionDetails.setUser(account_id)
+        ls_client.connectionDetails.setPassword(f"CST-{CST}|XST-{XST}")
 
     ls_client.connect()
 

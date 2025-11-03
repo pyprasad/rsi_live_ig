@@ -1,0 +1,47 @@
+# S&P 500 Live Trading Configuration
+ig:
+  account_type: "${IG_ACCOUNT_TYPE}"   # from .env
+  epic: "IX.D.SPTRD.DAILY.IP"          # S&P 500 Daily
+  size: 1.0
+  guaranteed_stop: false
+
+strategy:
+  mode: "sp500_reversal"      # Custom S&P 500 reversal strategy
+  rsi_period: 2
+  rsi_buy_level: 90           # Buy when RSI <= 90 (oversold reversal)
+  rsi_sell_level: 10          # Sell when RSI >= 10 (overbought reversal)
+  timeframe_sec: 1800         # 30 minutes
+
+  # Take Profit: (last 2 candles difference) * 10
+  tp_multiplier: 10.0
+
+  # Stop Loss: day's low + configurable pips
+  sl_pips_from_day_low: 100.0  # Configurable
+  sl_method: "day_low_plus_pips"
+
+  # Market open delay: don't trade first 30 mins
+  market_open_delay_minutes: 30
+
+  # News filter: 30 min buffer before/after high-impact news
+  news_buffer_minutes: 30
+  news_currencies: ["USD", "EUR"]
+
+  # One trade per direction
+  max_long_positions: 1
+  max_short_positions: 1
+
+# S&P 500 trading hours (nearly 24/5 for futures)
+session:
+  use_session_filter: false    # S&P 500 trades 24/5
+  tz: "America/New_York"       # US Eastern Time
+
+ops:
+  dry_run: false               # Set to true for testing
+  log_level: "INFO"
+
+  # Database for signals and trades
+  db_path: "data/sp500_trades.db"
+
+  # Forex Factory calendar scraping
+  scrape_news: true
+  news_url: "https://www.forexfactory.com/calendar"
